@@ -1,0 +1,563 @@
+package me.main.gameFalion.Bossbar;
+
+import org.bukkit.Bukkit;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
+import org.bukkit.scheduler.BukkitRunnable;
+
+public class BossBarHandler {
+    private BossBar bossBar;
+
+    public void mostrarBarra(String titulo, int duracionSegundos) {
+        bossBar = Bukkit.createBossBar(titulo, BarColor.BLUE, BarStyle.SOLID);
+        bossBar.setProgress(1.0);
+        bossBar.setVisible(true);
+
+        new BukkitRunnable() {
+            int tiempoRestante = duracionSegundos;
+
+            @Override
+            public void run() {
+                if (tiempoRestante <= 0) {
+                    bossBar.setVisible(false);
+                    bossBar.removeAll();
+                    cancel();
+                } else {
+                    double progreso = (double) tiempoRestante / duracionSegundos;
+                    bossBar.setProgress(progreso);
+                    bossBar.setTitle("Tiempo restante: " + tiempoRestante / 60 + "m " + tiempoRestante % 60 + "s");
+                    tiempoRestante--;
+                }
+            }
+        }.runTaskTimer(Bukkit.getPluginManager().getPlugin("PuentesFalion"), 0L, 20L); // Cada 1 segundo
+    }
+}
+
+
+package me.main.gameFalion.Equipos;
+
+import me.main.gameFalion.MessageManager;
+import org.bukkit.entity.Player;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
+public class Equipos {
+    private final HashMap<String, Set<UUID>> equipos;
+    private final Tag tagManager;
+    private final MessageManager messageManager;
+
+    public Equipos(MessageManager messageManager) {
+        equipos = new HashMap<>();
+        equipos.put("Azul", new HashSet<>());
+        equipos.put("Verde", new HashSet<>());
+        equipos.put("Rojo", new HashSet<>());
+        equipos.put("Amarillo", new HashSet<>());
+
+        this.tagManager = new Tag(); // Inicialización del tagManager
+        this.messageManager = messageManager;
+    }
+
+    public Set<UUID> getMiembros(String equipo) {
+        return equipos.getOrDefault(equipo, new HashSet<>());
+    }
+
+    public boolean unirseEquipo(String equipo, Player player) {
+        UUID playerUUID = player.getUniqueId();
+        if (equipos.containsKey(equipo)) {
+            for (Set<UUID> miembros : equipos.values()) {
+                if (miembros.contains(playerUUID)) {
+                    return false;
+                }
+            }
+
+            equipos.get(equipo).add(playerUUID);
+            tagManager.asignarJugadorAEquipo(player, equipo);
+            return true;
+        }
+        return false;
+    }
+
+    public boolean salirEquipo(Player player) {
+        UUID playerUUID = player.getUniqueId();
+        for (String equipo : equipos.keySet()) {
+            if (equipos.get(equipo).remove(playerUUID)) {
+                tagManager.asignarJugadorAEquipo(player, null); // Usar null para borrar la etiqueta
+                return true;
+            }
+        }
+        return false; // El jugador no estaba en ningún equipo
+    }
+}
+
+
+package me.main.gameFalion.Equipos;
+
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.entity.Player;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.ScoreboardManager;
+import org.bukkit.scoreboard.Team;
+
+public class Tag {
+    private final Scoreboard scoreboard;
+
+    public Tag() {
+        ScoreboardManager manager = Bukkit.getScoreboardManager();
+        this.scoreboard = manager.getNewScoreboard();
+
+        for (String teamName : new String[]{"Azul", "Verde", "Rojo", "Amarillo"}) {
+            Team team = scoreboard.registerNewTeam(teamName);
+
+            switch (teamName) {
+                case "Azul":
+                    team.setColor(ChatColor.BLUE);
+                    team.setPrefix(ChatColor.BLUE + "[Azul] ");
+                    break;
+                case "Verde":
+                    team.setColor(ChatColor.GREEN);
+                    team.setPrefix(ChatColor.GREEN + "[Verde] ");
+                    break;
+                case "Rojo":
+                    team.setColor(ChatColor.RED);
+                    team.setPrefix(ChatColor.RED + "[Rojo] ");
+                    break;
+                case "Amarillo":
+                    team.setColor(ChatColor.YELLOW);
+                    team.setPrefix(ChatColor.YELLOW + "[Amarillo] ");
+                    break;
+            }
+        }
+    }
+
+    public void asignarJugadorAEquipo(Player player, String equipo) {
+        if (equipo == null || equipo.isEmpty()) {
+            // Si el equipo es null, remover al jugador de todos los equipos
+            for (Team t : scoreboard.getTeams()) {
+                t.removeEntry(player.getName());
+            }
+            player.setScoreboard(scoreboard); // Actualizar el scoreboard del jugador
+            return;
+        }
+
+        Team team = scoreboard.getTeam(equipo);
+        if (team != null) {
+            // Remover al jugador de cualquier equipo previo
+            for (Team t : scoreboard.getTeams()) {
+                t.removeEntry(player.getName());
+            }
+
+            // Añadir al jugador al nuevo equipo
+            team.addEntry(player.getName());
+            player.setScoreboard(scoreboard); // Actualizar el scoreboard del jugador
+        } else {
+            player.sendMessage(ChatColor.RED + "El equipo " + equipo + " no existe.");
+        }
+    }
+}
+
+
+package me.main.gameFalion.Equipos;
+
+import me.main.gameFalion.MessageManager;
+import net.md_5.bungee.api.ChatColor;
+import org.bukkit.Bukkit;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerQuitEvent;
+
+public class TeamCommandListener implements CommandExecutor, Listener {
+    private final Equipos equipos;
+    private final MessageManager messageManager;
+
+    public TeamCommandListener(Equipos equipos, MessageManager messageManager) {
+        this.equipos = equipos;
+        this.messageManager = messageManager;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage(messageManager.getMessage("only-players"));
+            return true;
+        }
+
+        Player player = (Player) sender;
+
+        if (args.length == 0) {
+            player.sendMessage(messageManager.getMessage("usage-team-command"));
+            return true;
+        }
+
+        String subCommand = args[0].toLowerCase();
+
+        if (subCommand.equals("leave")) {
+            boolean removed = equipos.salirEquipo(player);
+            if (removed) {
+                player.sendMessage(ChatColor.GREEN + "Has salido de tu equipo.");
+                Bukkit.broadcastMessage(ChatColor.YELLOW + player.getName() + " ha salido de su equipo.");
+            } else {
+                player.sendMessage(ChatColor.RED + "No estás en ningún equipo.");
+            }
+            return true;
+        }
+
+        String equipo = args[0];
+        boolean unido = equipos.unirseEquipo(equipo, player);
+
+        if (unido) {
+            player.sendMessage(messageManager.getMessage("team-join-success").replace("{team}", equipo));
+            Bukkit.broadcastMessage(messageManager.getMessage("broadcast-team-join")
+                    .replace("{player}", player.getName())
+                    .replace("{team}", equipo));
+        } else {
+            player.sendMessage(messageManager.getMessage("team-join-failure"));
+        }
+        return true;
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
+        equipos.salirEquipo(player);
+    }
+}
+
+
+package me.main.gameFalion.Puentes;
+
+import me.main.gameFalion.Bossbar.BossBarHandler;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.WorldBorder;
+import org.bukkit.entity.Player;
+import org.bukkit.scheduler.BukkitRunnable;
+
+import java.util.Map;
+
+public class Game {
+    private final GameSala gameSala;
+    private final Map<String, Location> teamCenters;
+    private final int blockHeightLimit = 20;
+
+    public Game(GameSala gameSala, Map<String, Location> teamCenters) {
+        this.gameSala = gameSala;
+        this.teamCenters = teamCenters;
+    }
+
+    public void iniciarJuego() {
+        gameSala.verificarInicioJuego();
+
+        iniciarBossBar();
+
+        for (String team : teamCenters.keySet()) {
+            Location center = teamCenters.get(team);
+            if (center != null) {
+                WorldBorder border = center.getWorld().getWorldBorder();
+                border.setCenter(center);
+                border.setSize(50); // Tamaño del WorldBorder
+            }
+        }
+
+        limitarAltura();
+    }
+
+    private void iniciarBossBar() {
+        BossBarHandler bossBarHandler = new BossBarHandler();
+        bossBarHandler.mostrarBarra("Tiempo restante: 15m", 15 * 60); // 15 minutos
+    }
+
+    private void limitarAltura() {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    for (Map.Entry<String, Location> entry : teamCenters.entrySet()) {
+                        Location center = entry.getValue();
+                        if (player.getWorld().equals(center.getWorld())) {
+                            if (player.getLocation().getY() > center.getY() + blockHeightLimit) {
+                                player.damage(1.0); // Medio corazón
+                            }
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(Bukkit.getPluginManager().getPlugin("PuentesFalion"), 20L, 20L); // Cada 1 segundo
+    }
+}
+
+
+package me.main.gameFalion.Puentes;
+
+import me.main.gameFalion.Equipos.Equipos;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.entity.Player;
+
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+public class GameSala {
+    private final Equipos equipos;
+    private final Map<String, Location> teamSpawnLocations;
+    private boolean juegoIniciado;
+
+    public GameSala(Equipos equipos, Map<String, Location> teamSpawnLocations) {
+        this.equipos = equipos;
+        this.teamSpawnLocations = teamSpawnLocations;
+        this.juegoIniciado = false;
+    }
+
+    /**
+     * Verifica si todos los equipos tienen entre 2 y 4 jugadores para iniciar el juego.
+     */
+    public void verificarInicioJuego() {
+        if (juegoIniciado) return;
+
+        // Verificar que todos los equipos tengan 2-4 jugadores
+        boolean listoParaIniciar = true;
+        for (String team : teamSpawnLocations.keySet()) {
+            Set<UUID> miembros = equipos.getMiembros(team);
+            if (miembros == null || miembros.size() < 2 || miembros.size() > 4) {
+                listoParaIniciar = false;
+                break;
+            }
+        }
+
+        if (listoParaIniciar) {
+            iniciarJuego();
+        }
+    }
+
+    /**
+     * Inicia el juego, teletransportando a los jugadores a sus ubicaciones de spawn.
+     */
+    private void iniciarJuego() {
+        juegoIniciado = true;
+        Bukkit.broadcastMessage("¡El juego comenzará en 10 segundos!");
+
+        Bukkit.getScheduler().runTaskLater(Bukkit.getPluginManager().getPlugin("PuentesFalion"), () -> {
+            for (String team : teamSpawnLocations.keySet()) {
+                Location spawnLocation = teamSpawnLocations.get(team);
+                if (spawnLocation == null) {
+                    Bukkit.getLogger().warning("La ubicación de spawn para el equipo " + team + " no está configurada.");
+                    continue;
+                }
+
+                for (UUID uuid : equipos.getMiembros(team)) {
+                    Player player = Bukkit.getPlayer(uuid);
+                    if (player != null) {
+                        player.teleport(spawnLocation);
+                    } else {
+                        Bukkit.getLogger().warning("No se pudo encontrar al jugador con UUID: " + uuid);
+                    }
+                }
+            }
+        }, 200L); // 10 segundos (1 segundo = 20 ticks)
+    }
+
+    /**
+     * Reinicia el estado de la sala, permitiendo un nuevo juego.
+     */
+    public void reiniciarSala() {
+        juegoIniciado = false;
+    }
+
+    /**
+     * Devuelve si el juego ya está iniciado.
+     *
+     * @return true si el juego ya ha comenzado, false de lo contrario.
+     */
+    public boolean isJuegoIniciado() {
+        return juegoIniciado;
+    }
+}
+
+
+
+package me.main.gameFalion.Puentes;
+
+import org.bukkit.Bukkit;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
+
+public class GameStart implements CommandExecutor {
+    private final Game game;
+    private final GameSala gameSala;
+
+    public GameStart(GameSala gameSala, Game game) {
+        this.gameSala = gameSala;
+        this.game = game;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player)) {
+            sender.sendMessage("Este comando solo puede ejecutarse dentro del juego.");
+            return true;
+        }
+
+        Player player = (Player) sender;
+
+        if (!player.hasPermission("gamestart.force")) {
+            player.sendMessage("No tienes permisos para forzar el inicio del juego.");
+            return true;
+        }
+
+        if (gameSala.isJuegoIniciado()) {
+            player.sendMessage("El juego ya ha comenzado.");
+            return true;
+        }
+
+        player.sendMessage("Forzando el inicio del juego...");
+        Bukkit.broadcastMessage("El jugador " + player.getName() + " ha forzado el inicio del juego.");
+        game.iniciarJuego(); // Llama a la lógica de inicio del juego en Game
+        return true;
+    }
+}
+
+
+package me.main.gameFalion;
+
+import me.main.gameFalion.Equipos.Equipos;
+import me.main.gameFalion.Equipos.TeamCommandListener;
+import me.main.gameFalion.Puentes.Game;
+import me.main.gameFalion.Puentes.GameSala;
+import me.main.gameFalion.Puentes.GameStart;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.plugin.java.JavaPlugin;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class GameFalion extends JavaPlugin {
+    private Equipos equipos;
+    private MessageManager messageManager;
+    private GameSala gameSala;
+    private Game game;
+
+    @Override
+    public void onEnable() {
+        getLogger().info("El plugin PuentesFalion ha sido habilitado.");
+
+        // Inicializar el gestor de mensajes
+        messageManager = new MessageManager(this);
+        messageManager.saveDefaultMessages();
+
+        // Inicializar equipos
+        equipos = new Equipos(messageManager);
+
+        // Crear ubicaciones de spawn para los equipos
+        Map<String, Location> teamSpawnLocations = new HashMap<>();
+        teamSpawnLocations.put("Azul", new Location(Bukkit.getWorld("world"), 100, 64, 100));
+        teamSpawnLocations.put("Verde", new Location(Bukkit.getWorld("world"), -100, 64, -100));
+        teamSpawnLocations.put("Rojo", new Location(Bukkit.getWorld("world"), 100, 64, -100));
+        teamSpawnLocations.put("Amarillo", new Location(Bukkit.getWorld("world"), -100, 64, 100));
+
+        // Inicializar GameSala con los equipos y ubicaciones de spawn
+        gameSala = new GameSala(equipos, teamSpawnLocations);
+
+        // Crear centros del equipo
+        Map<String, Location> teamCenters = new HashMap<>();
+        teamCenters.put("Azul", new Location(Bukkit.getWorld("world"), 100, 64, 100));
+        teamCenters.put("Verde", new Location(Bukkit.getWorld("world"), -100, 64, -100));
+        teamCenters.put("Rojo", new Location(Bukkit.getWorld("world"), 100, 64, -100));
+        teamCenters.put("Amarillo", new Location(Bukkit.getWorld("world"), -100, 64, 100));
+
+        // Inicializar Game con GameSala y centros de equipo
+        game = new Game(gameSala, teamCenters);
+
+        // Registrar el listener y el comando
+        getServer().getPluginManager().registerEvents(new TeamCommandListener(equipos, messageManager), this);
+        this.getCommand("team").setExecutor(new TeamCommandListener(equipos, messageManager));
+        this.getCommand("forcestart").setExecutor(new GameStart(gameSala, game));
+
+        // Iniciar el sistema de juego (opcional o desde comandos)
+    }
+
+    @Override
+    public void onDisable() {
+        getLogger().info("El plugin PuentesFalion ha sido deshabilitado.");
+    }
+
+    public MessageManager getMessageManager() {
+        return messageManager;
+    }
+}
+
+
+package me.main.gameFalion;
+
+import org.bukkit.ChatColor;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.plugin.java.JavaPlugin;
+
+import java.io.File;
+import java.io.IOException;
+
+public class MessageManager {
+    public final JavaPlugin plugin;
+    private FileConfiguration config;
+    private File file;
+
+    public MessageManager(JavaPlugin plugin) {
+        this.plugin = plugin;
+        createMessagesFile();
+    }
+
+    private void createMessagesFile() {
+        file = new File(plugin.getDataFolder(), "messages.yml");
+        if (!file.exists()) {
+            file.getParentFile().mkdirs();
+            plugin.saveResource("messages.yml", false);
+        }
+        config = YamlConfiguration.loadConfiguration(file);
+    }
+
+    public void saveDefaultMessages() {
+        // Mensajes predeterminados
+        if (!config.contains("team-join-success")) {
+            config.set("team-join-success", "&aTe has unido al equipo {team}.");
+        }
+        if (!config.contains("team-join-failure")) {
+            config.set("team-join-failure", "&cNo se pudo unir al equipo. Puede que ya estés en un equipo o el equipo no exista.");
+        }
+        if (!config.contains("only-players")) {
+            config.set("only-players", "&cEste comando solo puede ser ejecutado por jugadores.");
+        }
+        if (!config.contains("usage-team-command")) {
+            config.set("usage-team-command", "&cUso incorrecto. Usa /team <Azul|Verde|Rojo|Amarillo>");
+        }
+        if (!config.contains("broadcast-team-join")) {
+            config.set("broadcast-team-join", "&e{player} se ha unido al equipo {team}.");
+
+        }
+
+        // Guardar los valores predeterminados en el archivo
+        try {
+            config.save(file);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String getMessage(String key) {
+        if (config.contains(key)) {
+            return ChatColor.translateAlternateColorCodes('&', config.getString(key));
+        }
+        return ChatColor.RED + "Mensaje no encontrado: " + key;
+    }
+}
